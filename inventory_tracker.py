@@ -8,6 +8,7 @@ import sys
 import os
 import sqlite3
 from datetime import datetime
+from zoneinfo import ZoneInfo
 from typing import Optional, List, Tuple, Dict, Any
 from dataclasses import dataclass
 
@@ -17,8 +18,11 @@ from PyQt6.QtWidgets import (
     QComboBox, QTextEdit, QDialog, QFormLayout, QFileDialog, QMessageBox,
     QHeaderView, QTabWidget
 )
-from PyQt6.QtCore import Qt, QTimer
+from PyQt6.QtCore import Qt, QTimer, QStringListModel
 from PyQt6.QtGui import QPixmap
+
+# Default timezone
+DEFAULT_TIMEZONE = "America/Los_Angeles"
 
 
 @dataclass
@@ -77,7 +81,8 @@ class StatusLog:
             location=row[7],
             comment=row[8],
             timestamp=row[9],
-            image_path=row[10] if len(row) > 10 else None
+            timezone=row[10] if len(row) > 10 else "America/Los_Angeles",
+            image_path=row[11] if len(row) > 11 else None
         )
 
 
@@ -107,8 +112,8 @@ class DatabaseManager:
                 current_status TEXT NOT NULL,
                 location TEXT NOT NULL,
                 image_path TEXT,
-                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                created_at TEXT,
+                updated_at TEXT
             )
         ''')
         
@@ -124,36 +129,39 @@ class DatabaseManager:
                 location TEXT NOT NULL,
                 comment TEXT,
                 image_path TEXT,
-                timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                timestamp TEXT,
+                timezone TEXT DEFAULT 'America/Los_Angeles',
                 FOREIGN KEY (item_id) REFERENCES inventory_items (id)
             )
         ''')
         
         self.conn.commit()
     
-    def add_item(self, item: InventoryItem) -> int:
+    def add_item(self, item: InventoryItem, timezone: str = DEFAULT_TIMEZONE) -> int:
         """Add a new inventory item"""
         cursor = self.conn.cursor()
+        now = datetime.now(ZoneInfo(timezone)).isoformat()
         cursor.execute('''
             INSERT INTO inventory_items 
-            (name, serial_number, company_asset_number, current_status, location, image_path)
-            VALUES (?, ?, ?, ?, ?, ?)
+            (name, serial_number, company_asset_number, current_status, location, image_path, created_at, updated_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
         ''', (item.name, item.serial_number, item.company_asset_number, 
-              item.current_status, item.location, item.image_path))
+              item.current_status, item.location, item.image_path, now, now))
         self.conn.commit()
         return cursor.lastrowid
     
-    def update_item(self, item: InventoryItem):
+    def update_item(self, item: InventoryItem, timezone: str = DEFAULT_TIMEZONE):
         """Update an existing inventory item"""
         cursor = self.conn.cursor()
+        now = datetime.now(ZoneInfo(timezone)).isoformat()
         cursor.execute('''
             UPDATE inventory_items 
             SET name = ?, serial_number = ?, company_asset_number = ?,
                 current_status = ?, location = ?, image_path = ?,
-                updated_at = CURRENT_TIMESTAMP
+                updated_at = ?
             WHERE id = ?
         ''', (item.name, item.serial_number, item.company_asset_number,
-              item.current_status, item.location, item.image_path, item.id))
+              item.current_status, item.location, item.image_path, now, item.id))
         self.conn.commit()
     
     def get_item(self, item_id: int) -> Optional[InventoryItem]:
@@ -191,16 +199,17 @@ class DatabaseManager:
         cursor.execute('SELECT * FROM inventory_items ORDER BY updated_at DESC')
         return [InventoryItem.from_row(row) for row in cursor.fetchall()]
     
-    def add_status_log(self, log: StatusLog) -> int:
+    def add_status_log(self, log: StatusLog, timezone: str = DEFAULT_TIMEZONE) -> int:
         """Add a status change log entry"""
         cursor = self.conn.cursor()
+        now = datetime.now(ZoneInfo(timezone)).isoformat()
         cursor.execute('''
             INSERT INTO status_logs
             (item_id, person_name, department, previous_status, new_status,
-             reason, location, comment, image_path)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+             reason, location, comment, image_path, timestamp, timezone)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         ''', (log.item_id, log.person_name, log.department, log.previous_status,
-              log.new_status, log.reason, log.location, log.comment, log.image_path))
+              log.new_status, log.reason, log.location, log.comment, log.image_path, now, timezone))
         self.conn.commit()
         return cursor.lastrowid
     
@@ -622,9 +631,10 @@ class MainWindow(QMainWindow):
                 image_path=item_data['image_path']
             )
             
-            item_id = self.database.add_item(item)
+            item_id = self.database.add_item(item, DEFAULT_TIMEZONE)
             self._log_status_change(item_id, "System", "System", "in inventory", "in inventory", 
-                                   "Item created", item_data['location'], "", item_data['image_path'])
+                                   "Item created", item_data['location'], "", item_data['image_path'], 
+                                   DEFAULT_TIMEZONE)
             
             self._refresh_items()
             self.statusBar().showMessage(f"Added item: {item.name}")
@@ -671,7 +681,7 @@ class MainWindow(QMainWindow):
             
             item.current_status = data['new_status']
             item.location = data['location']
-            self.database.update_item(item)
+            self.database.update_item(item, DEFAULT_TIMEZONE)
             
             log = StatusLog(
                 id=None,
@@ -683,11 +693,11 @@ class MainWindow(QMainWindow):
                 reason=data['reason'],
                 location=data['location'],
                 comment=data['comment'],
-                timestamp=datetime.now().isoformat(),
+                timestamp=datetime.now(ZoneInfo(DEFAULT_TIMEZONE)).isoformat(),
                 image_path=data['image_path']
             )
             
-            self.database.add_status_log(log)
+            self.database.add_status_log(log, DEFAULT_TIMEZONE)
             self._refresh_items()
             self.statusBar().showMessage(f"Status changed for {item.name}")
     
@@ -729,8 +739,10 @@ class MainWindow(QMainWindow):
                 self._refresh_items()
                 self.statusBar().showMessage(f"Deleted item: {item_name}")
     
-    def _log_status_change(self, item_id, person, dept, prev_status, new_status, reason, location, comment, image_path=None):
+    def _log_status_change(self, item_id, person, dept, prev_status, new_status, reason, location, comment, image_path=None, timezone=None):
         """Internal method to log status changes"""
+        if timezone is None:
+            timezone = DEFAULT_TIMEZONE
         log = StatusLog(
             id=None,
             item_id=item_id,
@@ -741,10 +753,10 @@ class MainWindow(QMainWindow):
             reason=reason,
             location=location,
             comment=comment,
-            timestamp=datetime.now().isoformat(),
+            timestamp=datetime.now(ZoneInfo(timezone)).isoformat(),
             image_path=image_path
         )
-        self.database.add_status_log(log)
+        self.database.add_status_log(log, timezone)
     
     def closeEvent(self, event):
         """Handle window close event"""
