@@ -406,7 +406,7 @@ class ReportDialog(QDialog):
         super().__init__(parent)
         self.item = item
         self.setWindowTitle(f"Report: {item.name}")
-        self.setMinimumSize(800, 600)
+        self.setMinimumSize(1000, 600)
         
         layout = QVBoxLayout()
         
@@ -434,7 +434,7 @@ class ReportDialog(QDialog):
         table.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Stretch)
         
         # Make timestamp column wider
-        table.setColumnWidth(0, 200)
+        table.setColumnWidth(0, 500)
         
         history = self.parent().database.get_item_history(item.id)
         table.setRowCount(len(history))
