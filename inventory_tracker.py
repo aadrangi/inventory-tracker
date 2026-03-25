@@ -81,7 +81,7 @@ class StatusLog:
         )
 
 
-STATUSES = ["in inventory", "checked out", "obsoleted", "discarded"]
+STATUSES = ["In Inventory", "Checked Out", "Obsoleted", "Discarded"]
 
 DB_PATH = os.path.join(os.path.expanduser("~"), ".inventory-tracker", "inventory.db")
 
@@ -580,11 +580,18 @@ class MainWindow(QMainWindow):
             table.setItem(row, 4, QTableWidgetItem(item.location))
             
             if item.updated_at:
+                # Try to format the timestamp, handle both ISO and SQLite format
+                ts = item.updated_at
                 try:
-                    ts = datetime.fromisoformat(item.updated_at).strftime("%Y-%m-%d %H:%M")
+                    # Try ISO format first
+                    if 'T' in str(ts):
+                        ts = datetime.fromisoformat(str(ts).replace('Z', '+00:00')).strftime("%Y-%m-%d %H:%M")
+                    else:
+                        # SQLite default format
+                        ts = datetime.strptime(str(ts), "%Y-%m-%d %H:%M:%S").strftime("%Y-%m-%d %H:%M")
                 except:
-                    ts = str(item.updated_at)
-                table.setItem(row, 5, QTableWidgetItem(ts))
+                    pass
+                table.setItem(row, 5, QTableWidgetItem(str(ts)))
             
             if item.image_path:
                 img_item = QTableWidgetItem("📄")
