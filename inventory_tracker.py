@@ -433,6 +433,9 @@ class ReportDialog(QDialog):
         ])
         table.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Stretch)
         
+        # Make timestamp column wider
+        table.setColumnWidth(0, 200)
+        
         history = self.parent().database.get_item_history(item.id)
         table.setRowCount(len(history))
         
@@ -627,13 +630,13 @@ class MainWindow(QMainWindow):
                 name=item_data['name'],
                 serial_number=item_data['serial_number'],
                 company_asset_number=item_data['company_asset_number'],
-                current_status="in inventory",
+                current_status="In inventory",
                 location=item_data['location'],
                 image_path=item_data['image_path']
             )
             
             item_id = self.database.add_item(item, DEFAULT_TIMEZONE)
-            self._log_status_change(item_id, "System", "System", "in inventory", "in inventory", 
+            self._log_status_change(item_id, "System", "System", "In inventory", "In inventory", 
                                    "Item created", item_data['location'], "", item_data['image_path'], 
                                    DEFAULT_TIMEZONE)
             
