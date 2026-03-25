@@ -427,7 +427,17 @@ class ReportDialog(QDialog):
         table.setRowCount(len(history))
         
         for row, log in enumerate(history):
-            table.setItem(row, 0, QTableWidgetItem(log.timestamp))
+            # Format timestamp to military time (24-hour format)
+            ts = log.timestamp
+            try:
+                if 'T' in str(ts):
+                    dt = datetime.fromisoformat(str(ts).replace('Z', '+00:00'))
+                else:
+                    dt = datetime.strptime(str(ts), "%Y-%m-%d %H:%M:%S")
+                ts = dt.strftime("%Y-%m-%d %H:%M:%S")  # Military time format
+            except:
+                pass
+            table.setItem(row, 0, QTableWidgetItem(str(ts)))
             table.setItem(row, 1, QTableWidgetItem(log.person_name))
             table.setItem(row, 2, QTableWidgetItem(log.department))
             table.setItem(row, 3, QTableWidgetItem(log.previous_status))
@@ -580,15 +590,14 @@ class MainWindow(QMainWindow):
             table.setItem(row, 4, QTableWidgetItem(item.location))
             
             if item.updated_at:
-                # Try to format the timestamp, handle both ISO and SQLite format
+                # Format timestamp to military time (24-hour format)
                 ts = item.updated_at
                 try:
-                    # Try ISO format first
                     if 'T' in str(ts):
-                        ts = datetime.fromisoformat(str(ts).replace('Z', '+00:00')).strftime("%Y-%m-%d %H:%M")
+                        dt = datetime.fromisoformat(str(ts).replace('Z', '+00:00'))
                     else:
-                        # SQLite default format
-                        ts = datetime.strptime(str(ts), "%Y-%m-%d %H:%M:%S").strftime("%Y-%m-%d %H:%M")
+                        dt = datetime.strptime(str(ts), "%Y-%m-%d %H:%M:%S")
+                    ts = dt.strftime("%Y-%m-%d %H:%M:%S")  # Military time with seconds
                 except:
                     pass
                 table.setItem(row, 5, QTableWidgetItem(str(ts)))
