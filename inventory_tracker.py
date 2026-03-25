@@ -81,9 +81,9 @@ class StatusLog:
             reason=row[6],
             location=row[7],
             comment=row[8],
-            timestamp=row[9],
-            timezone=row[10] if len(row) > 10 else "America/Los_Angeles",
-            image_path=row[11] if len(row) > 11 else None
+            image_path=row[9],
+            timestamp=row[10],
+            timezone=row[11] if len(row) > 11 else "America/Los_Angeles"
         )
 
 
