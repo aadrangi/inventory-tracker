@@ -66,6 +66,7 @@ class StatusLog:
     location: str
     comment: str
     timestamp: str
+    timezone: str = "America/Los_Angeles"
     image_path: Optional[str] = None
     
     @classmethod
