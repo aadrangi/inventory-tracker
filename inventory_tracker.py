@@ -406,7 +406,7 @@ class ReportDialog(QDialog):
         super().__init__(parent)
         self.item = item
         self.setWindowTitle(f"Report: {item.name}")
-        self.setMinimumSize(1000, 600)
+        self.setMinimumSize(1400, 600)
         
         layout = QVBoxLayout()
         
