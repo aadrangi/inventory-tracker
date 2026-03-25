@@ -268,6 +268,7 @@ class ImagePreviewWidget(QWidget):
             self, "Select Image", "", "Image Files (*.png *.jpg *.jpeg *.bmp)"
         )
         if file_path:
+            file_path = file_path.replace("\\", "/")
             self.image_path = file_path
             self._display_image(file_path)
     
@@ -278,7 +279,8 @@ class ImagePreviewWidget(QWidget):
     
     def _display_image(self, path: str):
         """Display the selected image"""
-        pixmap = QPixmap(path)
+        normalized_path = path.replace("\\", "/")
+        pixmap = QPixmap(normalized_path)
         if pixmap.isNull():
             self.image_label.setText("Failed to load image")
             return
@@ -418,12 +420,14 @@ class ReportDialog(QDialog):
         info_layout.addWidget(QLabel(f"Location: {item.location}"))
         layout.addLayout(info_layout)
         
-        if item.image_path and os.path.exists(item.image_path):
-            img_label = QLabel()
-            pixmap = QPixmap(item.image_path)
-            scaled_pixmap = pixmap.scaled(300, 300, Qt.AspectRatioMode.KeepAspectRatio,
-                                         Qt.TransformationMode.SmoothTransformation)
-            img_label.setPixmap(scaled_pixmap)
+        if item.image_path:
+            normalized_path = item.image_path.replace("\\", "/")
+            if os.path.exists(normalized_path):
+                img_label = QLabel()
+                pixmap = QPixmap(normalized_path)
+                scaled_pixmap = pixmap.scaled(300, 300, Qt.AspectRatioMode.KeepAspectRatio,
+                                             Qt.TransformationMode.SmoothTransformation)
+                img_label.setPixmap(scaled_pixmap)
             layout.addWidget(img_label)
         
         table = QTableWidget()
