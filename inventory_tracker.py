@@ -268,7 +268,7 @@ class ImagePreviewWidget(QWidget):
             self, "Select Image", "", "Image Files (*.png *.jpg *.jpeg *.bmp)"
         )
         if file_path:
-            file_path = file_path.replace("\\", "/")
+            file_path = os.path.normpath(file_path)
             self.image_path = file_path
             self._display_image(file_path)
     
@@ -279,7 +279,7 @@ class ImagePreviewWidget(QWidget):
     
     def _display_image(self, path: str):
         """Display the selected image"""
-        normalized_path = path.replace("\\", "/")
+        normalized_path = os.path.normpath(path)
         pixmap = QPixmap(normalized_path)
         if pixmap.isNull():
             self.image_label.setText("Failed to load image")
@@ -421,7 +421,7 @@ class ReportDialog(QDialog):
         layout.addLayout(info_layout)
         
         if item.image_path:
-            normalized_path = item.image_path.replace("\\", "/")
+            normalized_path = os.path.normpath(item.image_path)
             if os.path.exists(normalized_path):
                 img_label = QLabel()
                 pixmap = QPixmap(normalized_path)
