@@ -421,7 +421,7 @@ class ReportDialog(QDialog):
         info_label.setStyleSheet("font-weight: bold;")
         info_layout.addWidget(info_label)
         info_layout.addWidget(QLabel(f"Current Status: {item.current_status}"))
-        info_layout.addWidget(QLabel(f"Location: {item.location}"))
+        info_layout.addWidget(QLabel(f"Current Location: {item.location}"))
         layout.addLayout(info_layout)
         
         if item.image_path:
@@ -525,7 +525,7 @@ class MainWindow(QMainWindow):
         self.items_table = QTableWidget()
         self.items_table.setColumnCount(7)
         self.items_table.setHorizontalHeaderLabels([
-            "Name", "Serial #", "Asset #", "Status", "Location", "Updated", "Image"
+            "Name", "Serial #", "Asset #", "Status", "Current Location", "Updated", "Image"
         ])
         self.items_table.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Stretch)
         self.items_table.setSelectionBehavior(QTableWidget.SelectionBehavior.SelectRows)
@@ -563,7 +563,7 @@ class MainWindow(QMainWindow):
         self.overview_table = QTableWidget()
         self.overview_table.setColumnCount(7)
         self.overview_table.setHorizontalHeaderLabels([
-            "Name", "Serial #", "Asset #", "Status", "Location", "Updated", "Image"
+            "Name", "Serial #", "Asset #", "Status", "Current Location", "Updated", "Image"
         ])
         self.overview_table.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Stretch)
         self.overview_table.setSelectionBehavior(QTableWidget.SelectionBehavior.SelectRows)
@@ -799,7 +799,7 @@ class AddItemDialog(QDialog):
         form.addRow("Item Name:", self.name_input)
         form.addRow("Serial Number:", self.serial_input)
         form.addRow("Company Asset #:", self.asset_input)
-        form.addRow("Location:", self.location_input)
+        form.addRow("Current Location:", self.location_input)
         
         layout.addLayout(form)
         
