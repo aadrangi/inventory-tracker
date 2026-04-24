@@ -114,9 +114,14 @@ class DatabaseManager:
                 location TEXT NOT NULL,
                 image_path TEXT,
                 created_at TEXT,
-                updated_at TEXT
+                updated_at TEXT,
+                is_archived BOOLEAN DEFAULT 0
             )
         ''')
+
+        cursor.execute("SELECT 'is_archived' FROM pragma_table_info('inventory_items')")
+        if not cursor.fetchone():
+            cursor.execute("ALTER TABLE inventory_items ADD COLUMN is_archived BOOLEAN DEFAULT 0")
         
         cursor.execute('''
             CREATE TABLE IF NOT EXISTS status_logs (
@@ -180,7 +185,8 @@ class DatabaseManager:
         search_pattern = f"%{query}%"
         cursor.execute('''
             SELECT * FROM inventory_items 
-            WHERE name LIKE ? OR serial_number LIKE ? OR company_asset_number LIKE ?
+            WHERE (name LIKE ? OR serial_number LIKE ? OR company_asset_number LIKE ?)
+            AND is_archived = 0
             ORDER BY updated_at DESC
         ''', (search_pattern, search_pattern, search_pattern))
         return [InventoryItem.from_row(row) for row in cursor.fetchall()]
@@ -190,6 +196,7 @@ class DatabaseManager:
         cursor = self.conn.cursor()
         cursor.execute('''
             SELECT * FROM inventory_items 
+            WHERE is_archived = 0
             ORDER BY updated_at DESC LIMIT ?
         ''', (n,))
         return [InventoryItem.from_row(row) for row in cursor.fetchall()]
@@ -197,7 +204,7 @@ class DatabaseManager:
     def get_all_items(self) -> List[InventoryItem]:
         """Get all inventory items"""
         cursor = self.conn.cursor()
-        cursor.execute('SELECT * FROM inventory_items ORDER BY updated_at DESC')
+        cursor.execute('SELECT * FROM inventory_items WHERE is_archived = 0 ORDER BY updated_at DESC')
         return [InventoryItem.from_row(row) for row in cursor.fetchall()]
     
     def add_status_log(self, log: StatusLog, timezone: str = DEFAULT_TIMEZONE) -> int:
@@ -224,8 +231,26 @@ class DatabaseManager:
         ''', (item_id,))
         return [StatusLog.from_row(row) for row in cursor.fetchall()]
     
-    def delete_item(self, item_id: int):
-        """Delete an inventory item"""
+    def archive_item(self, item_id: int):
+        """Archive an inventory item instead of deleting it"""
+        cursor = self.conn.cursor()
+        cursor.execute('UPDATE inventory_items SET is_archived = 1 WHERE id = ?', (item_id,))
+        self.conn.commit()
+
+    def restore_item(self, item_id: int):
+        """Restore an archived inventory item"""
+        cursor = self.conn.cursor()
+        cursor.execute('UPDATE inventory_items SET is_archived = 0 WHERE id = ?', (item_id,))
+        self.conn.commit()
+
+    def get_all_archived(self) -> List[InventoryItem]:
+        """Get all archived inventory items"""
+        cursor = self.conn.cursor()
+        cursor.execute('SELECT * FROM inventory_items WHERE is_archived = 1 ORDER BY updated_at DESC')
+        return [InventoryItem.from_row(row) for row in cursor.fetchall()]
+
+    def hard_delete_item(self, item_id: int):
+        """Permanently delete an archived item"""
         cursor = self.conn.cursor()
         cursor.execute('DELETE FROM inventory_items WHERE id = ?', (item_id,))
         self.conn.commit()
@@ -544,35 +569,44 @@ class MainWindow(QMainWindow):
         self.btnViewReport = QPushButton("View Report")
         self.btnViewReport.clicked.connect(self._view_report)
         
-        self.btnDelete = QPushButton("Delete")
-        self.btnDelete.clicked.connect(self._delete_item)
+        self.btnArchive = QPushButton("Archive")
+        self.btnArchive.clicked.connect(self._archive_item)
         
         item_btn_layout.addWidget(self.btnAddItem)
         item_btn_layout.addWidget(self.btnUpdateStatus)
         item_btn_layout.addWidget(self.btnViewReport)
-        item_btn_layout.addWidget(self.btnDelete)
+        item_btn_layout.addWidget(self.btnArchive)
         
         items_layout.addLayout(item_btn_layout)
         
         tabs.addTab(items_widget, "Items")
         
-        overview_widget = QWidget()
-        overview_layout = QVBoxLayout()
-        overview_widget.setLayout(overview_layout)
-        
-        self.overview_table = QTableWidget()
-        self.overview_table.setColumnCount(7)
-        self.overview_table.setHorizontalHeaderLabels([
+        self.archive_table = QTableWidget()
+        self.archive_table.setColumnCount(7)
+        self.archive_table.setHorizontalHeaderLabels([
             "Name", "Serial #", "Asset #", "Status", "Current Location", "Updated", "Image"
         ])
-        self.overview_table.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Stretch)
-        self.overview_table.setSelectionBehavior(QTableWidget.SelectionBehavior.SelectRows)
-        self.overview_table.itemDoubleClicked.connect(self._edit_item)
-        
-        overview_layout.addWidget(QLabel("Last 15 Updated Items:"))
-        overview_layout.addWidget(self.overview_table)
-        
-        tabs.addTab(overview_widget, "Overview")
+        self.archive_table.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Stretch)
+        self.archive_table.setSelectionBehavior(QTableWidget.SelectionBehavior.SelectRows)
+
+        archive_btn_layout = QHBoxLayout()
+        self.btnRestore = QPushButton("Restore")
+        self.btnRestore.clicked.connect(self._restore_item)
+        self.btnArchiveReport = QPushButton("View Report")
+        self.btnArchiveReport.clicked.connect(self._view_archive_report)
+        self.btnHardDelete = QPushButton("Delete Permanently")
+        self.btnHardDelete.clicked.connect(self._hard_delete_item)
+        archive_btn_layout.addWidget(self.btnRestore)
+        archive_btn_layout.addWidget(self.btnArchiveReport)
+        archive_btn_layout.addWidget(self.btnHardDelete)
+
+        archive_widget = QWidget()
+        archive_layout = QVBoxLayout()
+        archive_widget.setLayout(archive_layout)
+        archive_layout.addWidget(self.archive_table)
+        archive_layout.addLayout(archive_btn_layout)
+
+        tabs.addTab(archive_widget, "Archive")
         
         main_layout.addWidget(tabs)
         
@@ -597,7 +631,7 @@ class MainWindow(QMainWindow):
             items = self.database.get_last_n_items(50)
             self._update_table(self.items_table, items)
         
-        self._update_table(self.overview_table, self.database.get_last_n_items(15))
+        self._update_table(self.archive_table, self.database.get_all_archived())
     
     def _update_table(self, table: QTableWidget, items: List[InventoryItem]):
         """Update a table with items"""
@@ -728,8 +762,8 @@ class MainWindow(QMainWindow):
         dialog = ReportDialog(item, self)
         dialog.exec()
     
-    def _delete_item(self):
-        """Delete an inventory item"""
+    def _archive_item(self):
+        """Archive an inventory item"""
         row = self.items_table.currentRow()
         if row < 0:
             return
@@ -737,8 +771,8 @@ class MainWindow(QMainWindow):
         item_name = self.items_table.item(row, 0).text()
         
         reply = QMessageBox.question(
-            self, "Delete Item",
-            f"Are you sure you want to delete '{item_name}'?",
+            self, "Archive Item",
+            f"Are you sure you want to archive '{item_name}'?",
             QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
             QMessageBox.StandardButton.No
         )
@@ -747,9 +781,61 @@ class MainWindow(QMainWindow):
             items = self.database.get_all_items()
             item = next((i for i in items if i.name == item_name), None)
             if item:
-                self.database.delete_item(item.id)
+                self.database.archive_item(item.id)
                 self._refresh_items()
-                self.statusBar().showMessage(f"Deleted item: {item_name}")
+                self.statusBar().showMessage(f"Archived item: {item_name}")
+
+    def _restore_item(self):
+        """Restore an archived item to the active items"""
+        row = self.archive_table.currentRow()
+        if row < 0:
+            return
+        
+        item_name = self.archive_table.item(row, 0).text()
+        items = self.database.get_all_archived()
+        item = next((i for i in items if i.name == item_name), None)
+        if item:
+            self.database.restore_item(item.id)
+            self._refresh_items()
+            self.statusBar().showMessage(f"Restored item: {item_name}")
+
+    def _view_archive_report(self):
+        """View item history report from archive tab"""
+        row = self.archive_table.currentRow()
+        if row < 0:
+            return
+        
+        item_name = self.archive_table.item(row, 0).text()
+        items = self.database.get_all_archived()
+        item = next((i for i in items if i.name == item_name), None)
+        if not item:
+            return
+        
+        dialog = ReportDialog(item, self)
+        dialog.exec()
+
+    def _hard_delete_item(self):
+        """Permanently delete an archived item"""
+        row = self.archive_table.currentRow()
+        if row < 0:
+            return
+        
+        item_name = self.archive_table.item(row, 0).text()
+        
+        reply = QMessageBox.question(
+            self, "Delete Permanently",
+            f"Are you sure you want to permanently delete '{item_name}'? This cannot be undone.",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.No
+        )
+        
+        if reply == QMessageBox.StandardButton.Yes:
+            items = self.database.get_all_archived()
+            item = next((i for i in items if i.name == item_name), None)
+            if item:
+                self.database.hard_delete_item(item.id)
+                self._refresh_items()
+                self.statusBar().showMessage(f"Permanently deleted item: {item_name}")
     
     def _log_status_change(self, item_id, person, dept, prev_status, new_status, reason, location, comment, image_path=None, timezone=None):
         """Internal method to log status changes"""
