@@ -437,7 +437,7 @@ class ReportDialog(QDialog):
         table = QTableWidget()
         table.setColumnCount(8)
         table.setHorizontalHeaderLabels([
-            "Timestamp", "Person", "Department", "From", "To", "Reason", "Location", "Comment"
+            "Timestamp", "Person", "Department", "From", "To", "Reason", "Current Location", "Comment"
         ])
         table.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Stretch)
         
