@@ -6,6 +6,7 @@ with status history, user information, and media attachments.
 
 import sys
 import os
+import shutil
 import sqlite3
 from datetime import datetime
 from zoneinfo import ZoneInfo
@@ -23,6 +24,40 @@ from PyQt6.QtGui import QPixmap, QFont
 
 # Default timezone
 DEFAULT_TIMEZONE = "America/Los_Angeles"
+
+APP_DIR = os.path.join(os.path.expanduser("~"), ".inventory-tracker")
+DB_PATH = os.path.join(APP_DIR, "inventory.db")
+IMAGE_CACHE_DIR = os.path.join(APP_DIR, "images")
+
+def _ensure_cache_dir():
+    os.makedirs(IMAGE_CACHE_DIR, exist_ok=True)
+
+def _cache_file(file_path: str, cache_dir: str = IMAGE_CACHE_DIR) -> str:
+    """Copy a file to the cache directory with a unique name and return the cached path."""
+    _ensure_cache_dir()
+    if not file_path or not os.path.exists(file_path):
+        return file_path or ""
+    
+    ext = os.path.splitext(file_path)[1]
+    name = os.path.basename(file_path)
+    safe_name = "".join(c if c.isalnum() or c in "-_." else "_" for c in name)
+    base, _ = os.path.splitext(safe_name)
+    cached_name = f"{base}_{int(datetime.now().timestamp() * 1000)}{ext}"
+    cached_path = os.path.join(cache_dir, cached_name)
+    
+    shutil.copy2(file_path, cached_path)
+    return cached_path
+
+def _ensure_cached_path(file_path: str) -> str:
+    """Ensure a file path points to a cached copy."""
+    if not file_path:
+        return ""
+    file_path = os.path.normpath(file_path)
+    
+    if file_path.startswith(IMAGE_CACHE_DIR):
+        return file_path
+    
+    return _cache_file(file_path)
 
 
 @dataclass
@@ -88,8 +123,6 @@ class StatusLog:
 
 
 STATUSES = ["In Inventory", "Checked Out", "Obsoleted", "Discarded"]
-
-DB_PATH = os.path.join(os.path.expanduser("~"), ".inventory-tracker", "inventory.db")
 
 
 class DatabaseManager:
@@ -298,8 +331,9 @@ class ImagePreviewWidget(QWidget):
                 self.image_label.setText("File not found")
                 self.image_path = None
                 return
-            self.image_path = file_path
-            self._display_image(file_path)
+            cached_path = _ensure_cached_path(file_path)
+            self.image_path = cached_path
+            self._display_image(cached_path)
     
     def _clear_image(self):
         """Clear the current image"""
@@ -998,9 +1032,9 @@ class AddItemDialog(QDialog):
         
         self.image_widget = ImagePreviewWidget()
         if item and item.image_path:
-            normalized_path = os.path.normpath(item.image_path)
-            self.image_widget._display_image(normalized_path)
-            self.image_widget.image_path = normalized_path
+            cached_path = _ensure_cached_path(item.image_path)
+            self.image_widget._display_image(cached_path)
+            self.image_widget.image_path = cached_path
         layout.addWidget(self.image_widget)
         
         btn_layout = QHBoxLayout()
