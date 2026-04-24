@@ -16,7 +16,7 @@ from PyQt6.QtWidgets import (
     QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
     QTableWidget, QTableWidgetItem, QPushButton, QLineEdit, QLabel,
     QComboBox, QTextEdit, QDialog, QFormLayout, QFileDialog, QMessageBox,
-    QHeaderView, QTabWidget
+    QHeaderView, QTabWidget, QScrollArea, QSizePolicy
 )
 from PyQt6.QtCore import Qt, QTimer, QStringListModel
 from PyQt6.QtGui import QPixmap, QFont
@@ -324,72 +324,84 @@ class ImagePreviewWidget(QWidget):
 
 class StatusChangeDialog(QDialog):
     """Dialog for recording status changes"""
-    
+
     def __init__(self, item: InventoryItem, parent=None):
         super().__init__(parent)
         self.item = item
         self.setWindowTitle(f"Change Status: {item.name}")
         self.setModal(True)
-        self.setMinimumWidth(500)
-        
-        layout = QVBoxLayout()
-        
+        self.setMinimumSize(500, 400)
+        self.setSizeGripEnabled(True)
+        self.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
+
+        scroll_area = QScrollArea()
+        scroll_area.setWidgetResizable(True)
+        scroll_area.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
+
+        scroll_widget = QWidget()
+        scroll_layout = QVBoxLayout()
+
         info_label = QLabel(f"Current item: {item.name} (SN: {item.serial_number})")
         info_label.setStyleSheet("font-weight: bold;")
-        layout.addWidget(info_label)
-        
+        scroll_layout.addWidget(info_label)
+
         form = QFormLayout()
         self.person_name = QLineEdit()
         self.department = QLineEdit()
-        
+
         form.addRow("Person Name:", self.person_name)
         form.addRow("Department:", self.department)
-        layout.addLayout(form)
-        
+        scroll_layout.addLayout(form)
+
         status_layout = QHBoxLayout()
         status_layout.addWidget(QLabel("Previous Status:"))
         self.prev_status = QLabel(item.current_status)
         status_layout.addWidget(self.prev_status)
-        
+
         status_layout.addWidget(QLabel("New Status:"))
         self.new_status = QComboBox()
         self.new_status.addItems([s for s in STATUSES if s != item.current_status])
         status_layout.addWidget(self.new_status)
-        
-        layout.addLayout(status_layout)
-        
+
+        scroll_layout.addLayout(status_layout)
+
         form2 = QFormLayout()
         self.reason = QLineEdit()
         self.location = QLineEdit()
         self.comment = QTextEdit()
         self.comment.setMaximumHeight(100)
-        
+
         form2.addRow("Change Reason:", self.reason)
         form2.addRow("New Location:", self.location)
         form2.addRow("Comment:", self.comment)
-        layout.addLayout(form2)
-        
+        scroll_layout.addLayout(form2)
+
         self.image_widget = ImagePreviewWidget()
-        layout.addWidget(self.image_widget)
-        
+        scroll_layout.addWidget(self.image_widget)
+
         btn_layout = QHBoxLayout()
         self.btnSave = QPushButton("Save")
         self.btnClear = QPushButton("Clear All")
         self.btnCancel = QPushButton("Cancel")
-        
+
         self.btnSave.setDefault(True)
         btn_layout.addStretch()
         btn_layout.addWidget(self.btnClear)
         btn_layout.addWidget(self.btnSave)
         btn_layout.addWidget(self.btnCancel)
-        
-        layout.addLayout(btn_layout)
-        self.setLayout(layout)
-        
+
+        scroll_layout.addLayout(btn_layout)
+        scroll_widget.setLayout(scroll_layout)
+        scroll_area.setWidget(scroll_widget)
+
+        main_layout = QVBoxLayout()
+        main_layout.addWidget(scroll_area)
+        self.setLayout(main_layout)
+
         self.btnSave.clicked.connect(self._save)
         self.btnClear.clicked.connect(self._clear)
         self.btnCancel.clicked.connect(self.reject)
-    
+
     def _save(self):
         """Save the status change"""
         if not self.person_name.text():
@@ -503,11 +515,13 @@ class ReportDialog(QDialog):
 
 class MainWindow(QMainWindow):
     """Main application window"""
-    
+
     def __init__(self):
         super().__init__()
         self.setWindowTitle("Inventory Tracker")
-        self.setMinimumSize(1200, 800)
+        self.setGeometry(100, 100, 1400, 900)
+        self.setMinimumSize(900, 600)
+        self.setWindowState(Qt.WindowState.WindowMaximized)
         
         self.database = DatabaseManager()
         
@@ -546,6 +560,7 @@ class MainWindow(QMainWindow):
         items_widget = QWidget()
         items_layout = QVBoxLayout()
         items_widget.setLayout(items_layout)
+        items_widget.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
         
         self.items_table = QTableWidget()
         self.items_table.setColumnCount(7)
@@ -554,13 +569,24 @@ class MainWindow(QMainWindow):
         ])
         self.items_table.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Stretch)
         self.items_table.horizontalHeader().setSectionClickable(True)
-        self.items_table.horizontalHeader().sectionClicked.connect(self._on_header_click_items)
+        self.items_table.horizontalHeader().sectionClicked.connect(self._header_click_items)
         self.items_table.setSelectionBehavior(QTableWidget.SelectionBehavior.SelectRows)
         self.items_table.itemDoubleClicked.connect(self._edit_item)
         self.items_table.sort_state = {'column': 5, 'descending': True}
         self.items_table.item_data: List[InventoryItem] = []
+        self.items_table.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
+        self.items_table.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
+        self.items_table.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
         
-        items_layout.addWidget(self.items_table)
+        items_scroll = QScrollArea()
+        items_scroll.setWidgetResizable(True)
+        items_scroll.horizontalScrollBar().setSliderPosition(items_scroll.horizontalScrollBar().minimum())
+        
+        scroll_inner = QWidget()
+        scroll_inner_layout = QVBoxLayout()
+        scroll_inner.setLayout(scroll_inner_layout)
+        scroll_inner_layout.addWidget(self.items_table)
+        items_scroll.setWidget(scroll_inner)
         
         item_btn_layout = QHBoxLayout()
         
@@ -580,11 +606,13 @@ class MainWindow(QMainWindow):
         item_btn_layout.addWidget(self.btnUpdateStatus)
         item_btn_layout.addWidget(self.btnViewReport)
         item_btn_layout.addWidget(self.btnArchive)
+        item_btn_layout.addStretch()
         
+        items_layout.addWidget(items_scroll)
         items_layout.addLayout(item_btn_layout)
-        
+
         tabs.addTab(items_widget, "Items")
-        
+
         self.archive_table = QTableWidget()
         self.archive_table.setColumnCount(7)
         self.archive_table.setHorizontalHeaderLabels([
@@ -592,10 +620,23 @@ class MainWindow(QMainWindow):
         ])
         self.archive_table.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Stretch)
         self.archive_table.horizontalHeader().setSectionClickable(True)
-        self.archive_table.horizontalHeader().sectionClicked.connect(self._on_header_click_archive)
+        self.archive_table.horizontalHeader().sectionClicked.connect(self._header_click_archive)
         self.archive_table.setSelectionBehavior(QTableWidget.SelectionBehavior.SelectRows)
         self.archive_table.sort_state = {'column': 5, 'descending': True}
         self.archive_table.item_data: List[InventoryItem] = []
+        self.archive_table.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
+        self.archive_table.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
+        self.archive_table.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
+
+        archive_scroll = QScrollArea()
+        archive_scroll.setWidgetResizable(True)
+        archive_scroll.horizontalScrollBar().setSliderPosition(archive_scroll.horizontalScrollBar().minimum())
+
+        archive_scroll_inner = QWidget()
+        archive_scroll_layout = QVBoxLayout()
+        archive_scroll_inner.setLayout(archive_scroll_layout)
+        archive_scroll_layout.addWidget(self.archive_table)
+        archive_scroll.setWidget(archive_scroll_inner)
 
         archive_btn_layout = QHBoxLayout()
         self.btnRestore = QPushButton("Restore")
@@ -607,11 +648,13 @@ class MainWindow(QMainWindow):
         archive_btn_layout.addWidget(self.btnRestore)
         archive_btn_layout.addWidget(self.btnArchiveReport)
         archive_btn_layout.addWidget(self.btnHardDelete)
+        archive_btn_layout.addStretch()
 
         archive_widget = QWidget()
         archive_layout = QVBoxLayout()
         archive_widget.setLayout(archive_layout)
-        archive_layout.addWidget(self.archive_table)
+        archive_widget.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
+        archive_layout.addWidget(archive_scroll)
         archive_layout.addLayout(archive_btn_layout)
 
         tabs.addTab(archive_widget, "Archive")
