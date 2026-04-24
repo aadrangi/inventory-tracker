@@ -19,7 +19,7 @@ from PyQt6.QtWidgets import (
     QHeaderView, QTabWidget
 )
 from PyQt6.QtCore import Qt, QTimer, QStringListModel
-from PyQt6.QtGui import QPixmap
+from PyQt6.QtGui import QPixmap, QFont
 
 # Default timezone
 DEFAULT_TIMEZONE = "America/Los_Angeles"
@@ -553,8 +553,12 @@ class MainWindow(QMainWindow):
             "Name", "Serial #", "Asset #", "Status", "Current Location", "Updated", "Image"
         ])
         self.items_table.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Stretch)
+        self.items_table.horizontalHeader().setSectionClickable(True)
+        self.items_table.horizontalHeader().sectionClicked.connect(self._on_header_click_items)
         self.items_table.setSelectionBehavior(QTableWidget.SelectionBehavior.SelectRows)
         self.items_table.itemDoubleClicked.connect(self._edit_item)
+        self.items_table.sort_state = {'column': 5, 'descending': True}
+        self.items_table.item_data: List[InventoryItem] = []
         
         items_layout.addWidget(self.items_table)
         
@@ -587,7 +591,11 @@ class MainWindow(QMainWindow):
             "Name", "Serial #", "Asset #", "Status", "Current Location", "Updated", "Image"
         ])
         self.archive_table.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Stretch)
+        self.archive_table.horizontalHeader().setSectionClickable(True)
+        self.archive_table.horizontalHeader().sectionClicked.connect(self._on_header_click_archive)
         self.archive_table.setSelectionBehavior(QTableWidget.SelectionBehavior.SelectRows)
+        self.archive_table.sort_state = {'column': 5, 'descending': True}
+        self.archive_table.item_data: List[InventoryItem] = []
 
         archive_btn_layout = QHBoxLayout()
         self.btnRestore = QPushButton("Restore")
@@ -611,55 +619,111 @@ class MainWindow(QMainWindow):
         main_layout.addWidget(tabs)
         
         self.statusBar().showMessage("Ready")
-    
+        self._update_header_labels(self.items_table)
+        self._update_header_labels(self.archive_table)
+
+    def _header_click_items(self, column: int):
+        """Handle column header click for items table"""
+        state = self.items_table.sort_state
+        if state['column'] == column:
+            state['descending'] = not state['descending']
+        else:
+            state['column'] = column
+            state['descending'] = True
+        self._update_table(self.items_table, self.items_table.item_data)
+        self._update_header_labels(self.items_table)
+
+    def _header_click_archive(self, column: int):
+        """Handle column header click for archive table"""
+        state = self.archive_table.sort_state
+        if state['column'] == column:
+            state['descending'] = not state['descending']
+        else:
+            state['column'] = column
+            state['descending'] = True
+        self._update_table(self.archive_table, self.archive_table.item_data)
+        self._update_header_labels(self.archive_table)
+
+    def _update_header_labels(self, table: QTableWidget):
+        """Update header labels to show sort indicator"""
+        state = table.sort_state
+        for i in range(table.columnCount()):
+            label = table.horizontalHeaderItem(i).text()
+            base = label.replace(" \u25b2", "").replace(" \u25bc", "")
+            if i == state['column']:
+                indicator = "\u25b2" if state['descending'] else "\u25bc"
+                display = f"{base} {indicator}"
+            else:
+                display = base
+            table.setHorizontalHeaderItem(i, QTableWidgetItem(display))
+
     def _handle_search(self):
         """Handle search input"""
         query = self.search_input.text().strip()
         if query:
-            items = self.database.search_items(query)
+            self.items_table.item_data = self.database.search_items(query)
         else:
-            items = self.database.get_last_n_items(50)
-        self._update_table(self.items_table, items)
+            self.items_table.item_data = self.database.get_last_n_items(50)
+        self._update_table(self.items_table)
     
     def _refresh_items(self):
         """Refresh the item tables"""
         query = self.search_input.text().strip()
         if query:
-            items = self.database.search_items(query)
-            self._update_table(self.items_table, items)
+            self.items_table.item_data = self.database.search_items(query)
         else:
-            items = self.database.get_last_n_items(50)
-            self._update_table(self.items_table, items)
+            self.items_table.item_data = self.database.get_last_n_items(50)
+        self._update_table(self.items_table)
         
-        self._update_table(self.archive_table, self.database.get_all_archived())
+        self.archive_table.item_data = self.database.get_all_archived()
+        self._update_table(self.archive_table)
     
-    def _update_table(self, table: QTableWidget, items: List[InventoryItem]):
-        """Update a table with items"""
+    def _format_timestamp(self, ts: str) -> str:
+        """Format timestamp to military time"""
+        try:
+            if 'T' in str(ts):
+                dt = datetime.fromisoformat(str(ts).replace('Z', '+00:00'))
+            else:
+                dt = datetime.strptime(str(ts), "%Y-%m-%d %H:%M:%S")
+            return dt.strftime("%Y-%m-%d %H:%M:%S")
+        except:
+            return str(ts)
+
+    def _sort_items(self, items: List[InventoryItem], column: int, descending: bool) -> List[InventoryItem]:
+        """Sort items by given column index"""
+        key_map = {
+            0: lambda x: x.name.lower(),
+            1: lambda x: x.serial_number.lower(),
+            2: lambda x: x.company_asset_number.lower(),
+            3: lambda x: x.current_status.lower(),
+            4: lambda x: x.location.lower(),
+            5: lambda x: x.updated_at or '',
+            6: lambda x: '' if x.image_path else 'zzz',
+        }
+        key_fn = key_map.get(column, lambda x: x.name.lower())
+        return sorted(items, key=key_fn, reverse=descending)
+
+    def _populate_table(self, table: QTableWidget, items: List[InventoryItem]):
+        """Fill table rows from items list"""
         table.setRowCount(len(items))
-        
         for row, item in enumerate(items):
             table.setItem(row, 0, QTableWidgetItem(item.name))
             table.setItem(row, 1, QTableWidgetItem(item.serial_number))
             table.setItem(row, 2, QTableWidgetItem(item.company_asset_number))
             table.setItem(row, 3, QTableWidgetItem(item.current_status))
             table.setItem(row, 4, QTableWidgetItem(item.location))
-            
-            if item.updated_at:
-                # Format timestamp to military time (24-hour format)
-                ts = item.updated_at
-                try:
-                    if 'T' in str(ts):
-                        dt = datetime.fromisoformat(str(ts).replace('Z', '+00:00'))
-                    else:
-                        dt = datetime.strptime(str(ts), "%Y-%m-%d %H:%M:%S")
-                    ts = dt.strftime("%Y-%m-%d %H:%M:%S")  # Military time with seconds
-                except:
-                    pass
-                table.setItem(row, 5, QTableWidgetItem(str(ts)))
-            
+            table.setItem(row, 5, QTableWidgetItem(self._format_timestamp(item.updated_at)))
             if item.image_path:
-                img_item = QTableWidgetItem("📄")
-                table.setItem(row, 6, img_item)
+                table.setItem(row, 6, QTableWidgetItem("📄"))
+
+    def _update_table(self, table: QTableWidget):
+        """Update table with sorted items from item_data"""
+        sorted_items = self._sort_items(
+            table.item_data,
+            table.sort_state['column'],
+            table.sort_state['descending']
+        )
+        self._populate_table(table, sorted_items)
     
     def _add_item(self):
         """Add a new inventory item"""
