@@ -269,6 +269,10 @@ class ImagePreviewWidget(QWidget):
         )
         if file_path:
             file_path = os.path.normpath(file_path)
+            if not os.path.exists(file_path):
+                self.image_label.setText("File not found")
+                self.image_path = None
+                return
             self.image_path = file_path
             self._display_image(file_path)
     
@@ -801,8 +805,9 @@ class AddItemDialog(QDialog):
         
         self.image_widget = ImagePreviewWidget()
         if item and item.image_path:
-            self.image_widget._display_image(item.image_path)
-            self.image_widget.image_path = item.image_path
+            normalized_path = os.path.normpath(item.image_path)
+            self.image_widget._display_image(normalized_path)
+            self.image_widget.image_path = normalized_path
         layout.addWidget(self.image_widget)
         
         btn_layout = QHBoxLayout()
