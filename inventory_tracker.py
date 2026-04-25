@@ -7,6 +7,7 @@ with status history, user information, and media attachments.
 import sys
 import os
 import shutil
+import subprocess
 import sqlite3
 from datetime import datetime
 from zoneinfo import ZoneInfo
@@ -28,13 +29,16 @@ DEFAULT_TIMEZONE = "America/Los_Angeles"
 APP_DIR = os.path.join(os.path.expanduser("~"), ".inventory-tracker")
 DB_PATH = os.path.join(APP_DIR, "inventory.db")
 IMAGE_CACHE_DIR = os.path.join(APP_DIR, "images")
+ATTACHMENT_CACHE_DIR = os.path.join(APP_DIR, "attachments")
 
-def _ensure_cache_dir():
-    os.makedirs(IMAGE_CACHE_DIR, exist_ok=True)
+def _ensure_cache_dir(cache_dir: Optional[str] = None):
+    if cache_dir is None:
+        cache_dir = IMAGE_CACHE_DIR
+    os.makedirs(cache_dir, exist_ok=True)
 
 def _cache_file(file_path: str, cache_dir: str = IMAGE_CACHE_DIR) -> str:
     """Copy a file to the cache directory with a unique name and return the cached path."""
-    _ensure_cache_dir()
+    _ensure_cache_dir(cache_dir)
     if not file_path or not os.path.exists(file_path):
         return file_path or ""
     
@@ -48,16 +52,16 @@ def _cache_file(file_path: str, cache_dir: str = IMAGE_CACHE_DIR) -> str:
     shutil.copy2(file_path, cached_path)
     return cached_path
 
-def _ensure_cached_path(file_path: str) -> str:
+def _ensure_cached_path(file_path: str, cache_dir: str = IMAGE_CACHE_DIR) -> str:
     """Ensure a file path points to a cached copy."""
     if not file_path:
         return ""
     file_path = os.path.normpath(file_path)
     
-    if file_path.startswith(IMAGE_CACHE_DIR):
+    if file_path.startswith(cache_dir):
         return file_path
     
-    return _cache_file(file_path)
+    return _cache_file(file_path, cache_dir)
 
 
 @dataclass
@@ -173,7 +177,18 @@ class DatabaseManager:
                 FOREIGN KEY (item_id) REFERENCES inventory_items (id)
             )
         ''')
-        
+
+        cursor.execute('''
+            CREATE TABLE IF NOT EXISTS attachments (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                item_id INTEGER NOT NULL,
+                file_path TEXT NOT NULL,
+                original_name TEXT NOT NULL,
+                added_at TEXT,
+                FOREIGN KEY (item_id) REFERENCES inventory_items (id)
+            )
+        ''')
+
         self.conn.commit()
     
     def add_item(self, item: InventoryItem, timezone: str = DEFAULT_TIMEZONE) -> int:
@@ -292,6 +307,38 @@ class DatabaseManager:
         """Close database connection"""
         self.conn.close()
 
+    def add_attachment(self, item_id: int, cached_path: str, original_name: str):
+        """Add an attachment linked to an inventory item."""
+        cursor = self.conn.cursor()
+        now = datetime.now(ZoneInfo(DEFAULT_TIMEZONE)).isoformat()
+        cursor.execute(
+            "INSERT INTO attachments (item_id, file_path, original_name, added_at) VALUES (?, ?, ?, ?)",
+            (item_id, cached_path, original_name, now)
+        )
+        self.conn.commit()
+
+    def get_attachments(self, item_id: int) -> List[Tuple[int, str, str, str]]:
+        """Return list of (id, original_name, file_path, added_at) for an item."""
+        cursor = self.conn.cursor()
+        cursor.execute(
+            "SELECT id, original_name, file_path, added_at FROM attachments WHERE item_id = ? ORDER BY added_at DESC",
+            (item_id,)
+        )
+        return cursor.fetchall()
+
+    def delete_attachment(self, attachment_id: int):
+        """Delete an attachment record (and its cached file if it exists)."""
+        cursor = self.conn.cursor()
+        cursor.execute("SELECT file_path FROM attachments WHERE id = ?", (attachment_id,))
+        row = cursor.fetchone()
+        if row and row["file_path"]:
+            try:
+                os.remove(row["file_path"])
+            except OSError:
+                pass
+        cursor.execute("DELETE FROM attachments WHERE id = ?", (attachment_id,))
+        self.conn.commit()
+
 
 class ImagePreviewWidget(QWidget):
     """Widget to preview and manage images"""
@@ -356,6 +403,77 @@ class ImagePreviewWidget(QWidget):
         return self.image_path
 
 
+class AttachmentManagerWidget(QWidget):
+    """Widget to manage arbitrary file attachments"""
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.attachments: List[Dict[str, str]] = []
+
+        layout = QVBoxLayout()
+
+        label = QLabel("Attachments")
+        label.setStyleSheet("font-weight: bold;")
+        layout.addWidget(label)
+
+        self.list_widget = QTableWidget()
+        self.list_widget.setColumnCount(3)
+        self.list_widget.setHorizontalHeaderLabels(["File", "Added", "Action"])
+        self.list_widget.horizontalHeader().setSectionResizeMode(0, QHeaderView.ResizeMode.Stretch)
+        self.list_widget.horizontalHeader().setSectionResizeMode(1, QHeaderView.ResizeMode.ResizeToContents)
+        self.list_widget.horizontalHeader().setSectionResizeMode(2, QHeaderView.ResizeMode.ResizeToContents)
+        self.list_widget.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
+        self.list_widget.setMaximumHeight(200)
+        layout.addWidget(self.list_widget)
+
+        btn_row = QHBoxLayout()
+        self.btn_add = QPushButton("Add Attachment")
+        self.btn_remove = QPushButton("Remove")
+        btn_row.addWidget(self.btn_add)
+        btn_row.addWidget(self.btn_remove)
+        layout.addLayout(btn_row)
+
+        self.setLayout(layout)
+
+        self.btn_add.clicked.connect(self._add_attachment)
+        self.btn_remove.clicked.connect(self._remove_attachment)
+
+    def _add_attachment(self):
+        file_path, _ = QFileDialog.getOpenFileName(
+            self, "Select File", "", "All Files (*.*)"
+        )
+        if file_path:
+            file_path = os.path.normpath(file_path)
+            if not os.path.exists(file_path):
+                return
+            cached_path = _ensure_cached_path(file_path, ATTACHMENT_CACHE_DIR)
+            name = os.path.basename(file_path)
+            added = datetime.now(ZoneInfo(DEFAULT_TIMEZONE)).strftime("%Y-%m-%d %H:%M:%S")
+            self.attachments.append({
+                'cached_path': cached_path,
+                'original_name': name,
+                'added_at': added,
+            })
+            self._refresh_list()
+
+    def _remove_attachment(self):
+        current_row = self.list_widget.currentRow()
+        if current_row < 0:
+            return
+        self.attachments.pop(current_row)
+        self._refresh_list()
+
+    def _refresh_list(self):
+        self.list_widget.setRowCount(len(self.attachments))
+        for row, att in enumerate(self.attachments):
+            self.list_widget.setItem(row, 0, QTableWidgetItem(att['original_name']))
+            self.list_widget.setItem(row, 1, QTableWidgetItem(att['added_at']))
+            self.list_widget.setItem(row, 2, QTableWidgetItem(""))
+
+    def get_attachments(self) -> List[Dict[str, str]]:
+        return list(self.attachments)
+
+
 class StatusChangeDialog(QDialog):
     """Dialog for recording status changes"""
 
@@ -412,6 +530,9 @@ class StatusChangeDialog(QDialog):
 
         self.image_widget = ImagePreviewWidget()
         scroll_layout.addWidget(self.image_widget)
+
+        self.attachment_widget = AttachmentManagerWidget()
+        scroll_layout.addWidget(self.attachment_widget)
 
         btn_layout = QHBoxLayout()
         self.btnSave = QPushButton("Save")
@@ -472,7 +593,8 @@ class StatusChangeDialog(QDialog):
             'reason': self.reason.text(),
             'location': self.location.text(),
             'comment': self.comment.toPlainText(),
-            'image_path': self.image_widget.get_image_path()
+            'image_path': self.image_widget.get_image_path(),
+            'attachments': self.attachment_widget.get_attachments()
         }
 
 
@@ -539,11 +661,43 @@ class ReportDialog(QDialog):
             table.setItem(row, 7, QTableWidgetItem(log.comment))
         
         layout.addWidget(table)
-        
+
+        att_label = QLabel("Attachments:")
+        att_label.setStyleSheet("font-weight: bold; margin-top: 8px;")
+        layout.addWidget(att_label)
+
+        attachments = self.parent().database.get_attachments(item.id)
+        if attachments:
+            att_table = QTableWidget()
+            att_table.setColumnCount(3)
+            att_table.setHorizontalHeaderLabels(["File", "Added", ""])
+            att_table.horizontalHeader().setSectionResizeMode(0, QHeaderView.ResizeMode.Stretch)
+            att_table.horizontalHeader().setSectionResizeMode(1, QHeaderView.ResizeMode.ResizeToContents)
+            att_table.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
+            att_table.setRowCount(len(attachments))
+            for row, att in enumerate(attachments):
+                name = att["original_name"] if isinstance(att, dict) else att[1]
+                added = att["added_at"] if isinstance(att, dict) else att[3]
+                att_table.setItem(row, 0, QTableWidgetItem(name))
+                att_table.setItem(row, 1, QTableWidgetItem(added))
+                att_table.setItem(row, 2, QTableWidgetItem(""))
+                fp = att["file_path"] if isinstance(att, dict) else att[2]
+                if fp and os.path.exists(fp):
+                    open_btn = QPushButton("Open")
+                    def _open(fp=fp):
+                        os.startfile(fp) if hasattr(os, 'startfile') else subprocess.run(["xdg-open", fp])
+                    open_btn.clicked.connect(_open)
+                    att_table.setCellWidget(row, 2, open_btn)
+            layout.addWidget(att_table)
+        else:
+            no_att = QLabel("No attachments.")
+            no_att.setStyleSheet("color: gray;")
+            layout.addWidget(no_att)
+
         btn = QPushButton("Close")
         btn.clicked.connect(self.accept)
         layout.addWidget(btn)
-        
+
         self.setLayout(layout)
 
 
@@ -820,8 +974,10 @@ class MainWindow(QMainWindow):
             
             item_id = self.database.add_item(item, DEFAULT_TIMEZONE)
             self._log_status_change(item_id, "System", "System", "In inventory", "In inventory", 
-                                   "Item created", item_data['location'], "", item_data['image_path'], 
-                                   DEFAULT_TIMEZONE)
+                                    "Item created", item_data['location'], "", item_data['image_path'], 
+                                    DEFAULT_TIMEZONE)
+            for att in item_data.get('attachments', []):
+                self.database.add_attachment(item_id, att['cached_path'], att['original_name'])
             
             self._refresh_items()
             self.statusBar().showMessage(f"Added item: {item.name}")
@@ -847,6 +1003,8 @@ class MainWindow(QMainWindow):
             item.location = item_data['location']
             item.image_path = item_data['image_path']
             self.database.update_item(item)
+            for att in item_data.get('attachments', []):
+                self.database.add_attachment(item.id, att['cached_path'], att['original_name'])
             self._refresh_items()
             self.statusBar().showMessage(f"Updated item: {item.name}")
     
@@ -885,6 +1043,8 @@ class MainWindow(QMainWindow):
             )
             
             self.database.add_status_log(log, DEFAULT_TIMEZONE)
+            for att in data['attachments']:
+                self.database.add_attachment(item.id, att['cached_path'], att['original_name'])
             self._refresh_items()
             self.statusBar().showMessage(f"Status changed for {item.name}")
     
@@ -1036,7 +1196,10 @@ class AddItemDialog(QDialog):
             self.image_widget._display_image(cached_path)
             self.image_widget.image_path = cached_path
         layout.addWidget(self.image_widget)
-        
+
+        self.attachment_widget = AttachmentManagerWidget()
+        layout.addWidget(self.attachment_widget)
+
         btn_layout = QHBoxLayout()
         self.btnSave = QPushButton("Save" if item else "Add")
         self.btnCancel = QPushButton("Cancel")
@@ -1069,14 +1232,15 @@ class AddItemDialog(QDialog):
         
         self.accept()
     
-    def get_data(self) -> Dict[str, str]:
+    def get_data(self) -> Dict[str, Any]:
         """Get the form data"""
         return {
             'name': self.name_input.text(),
             'serial_number': self.serial_input.text(),
             'company_asset_number': self.asset_input.text(),
             'location': self.location_input.text(),
-            'image_path': self.image_widget.get_image_path()
+            'image_path': self.image_widget.get_image_path(),
+            'attachments': self.attachment_widget.get_attachments()
         }
 
 
